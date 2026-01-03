@@ -1,26 +1,106 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  /* Modern Indigo/Violet Palette */
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Glassmorphism Tokens */
+  --glass-border: rgba(255, 255, 255, 0.4);
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+
+  --background: #f8fafc;
+  /* Slate-50 base */
+  --foreground: #1e293b;
+  /* Slate-800 */
+
+  /* Aurora Gradients (Light) */
+  --aurora-1: rgba(99, 102, 241, 0.08);
+  /* Indigo */
+  --aurora-2: rgba(168, 85, 247, 0.08);
+  /* Purple */
+  --aurora-3: rgba(59, 130, 246, 0.08);
+  /* Blue */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* X (Twitter) Dark Mode "Lights Out" Palette */
+    --glass-border: #2f3336;
+    --glass-bg: rgba(0, 0, 0, 0.8);
+    /* Pure Black Glass */
+    --glass-shadow: none;
+
+    --background: #000000;
+    --foreground: #e7e9ea;
+
+    /* Hide Aurora in Dark Mode */
+    --aurora-1: transparent;
+    --aurora-2: transparent;
+    --aurora-3: transparent;
   }
+}
+
+.dark {
+  /* X (Twitter) Dark Mode Manual Override */
+  --glass-border: #2f3336;
+  --glass-bg: rgba(0, 0, 0, 0.95);
+  --glass-shadow: none;
+
+  --background: #000000;
+  --foreground: #e7e9ea;
+
+  /* No Aurora in X-style dark mode */
+  --aurora-1: transparent;
+  --aurora-2: transparent;
+  --aurora-3: transparent;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* X-like font stack */
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  transition: background-color 0.0s, color 0.0s;
+  /* X is snappy, remove loose transition if desired, keeping small for polish */
+}
+
+/* Glassmorphism Utility Class */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(0px);
+  /* Flat design, lessen blur */
+  -webkit-backdrop-filter: blur(0px);
+  border: 1px solid var(--glass-border);
+  box-shadow: none;
+}
+
+/* Beautiful Aurora Background (Pseudo-element) */
+body::before {
+  content: "";
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at center, var(--aurora-1), transparent 40%),
+    radial-gradient(circle at 80% 20%, var(--aurora-2), transparent 40%),
+    radial-gradient(circle at 20% 80%, var(--aurora-3), transparent 40%);
+  z-index: -1;
+  animation: aurora 30s linear infinite;
+  pointer-events: none;
+  /* Ensure it doesn't render heavily in dark mode */
+  opacity: 1;
 }

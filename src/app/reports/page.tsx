@@ -1,95 +1,59 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import Link from "next/link";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import {
+  type Report,
+  type ReportStats,
+  type TrendData,
+  STORAGE_KEY,
+  TASKS_KEY_PREFIX,
+  getWeekRange,
+  formatWeekRangeTitle,
+  sortReportsDesc,
+  loadTasks,
+  buildStats,
+  findThisWeekReport,
+  loadAllReportsStats,
+  generateSampleReports,
+} from "@/lib/reportUtils";
 
-type Report = {
-  id: string;
-  title: string;       // 「M/D～M/Dの週報」
-  description: string; // 説明
-  createdAt: string;   // ISO文字列
-  weekStart: string;   // その週の開始日（ISO）
-  weekEnd: string;     // その週の終了日（ISO）
-};
+import { ReportsHeader } from "@/components/ReportsHeader";
+import { DashboardStats } from "@/components/DashboardStats";
+import { ReportList } from "@/components/ReportList";
+import { TrendAnalysis } from "@/components/dashboard/TrendAnalysis";
+import { AnimatedCard } from "@/components/ui/AnimatedCard";
 
-const STORAGE_KEY = "weekly-report-list";
-
-/** 週の開始・終了（ここでは「月曜はじまり、日曜おわり」にしています） */
-function getWeekRange(date: Date): { start: Date; end: Date } {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-
-  const day = d.getDay(); // 0:日, 1:月, ... 6:土
-  const diffFromMonday = (day + 6) % 7; // 月曜を0にする調整
-  const start = new Date(d);
-  start.setDate(d.getDate() - diffFromMonday);
-  start.setHours(0, 0, 0, 0);
-
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-
-  return { start, end };
-}
-
-/** タイトル用：「M/D～M/Dの週報」 */
-function formatWeekRangeTitle(startIso: string, endIso: string): string {
-  const s = new Date(startIso);
-  const e = new Date(endIso);
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
-    return "週報";
-  }
-  const sStr = s.toLocaleDateString("ja-JP", {
-    month: "numeric",
-    day: "numeric",
-  });
-  const eStr = e.toLocaleDateString("ja-JP", {
-    month: "numeric",
-    day: "numeric",
-  });
-  return `${sStr}～${eStr}の週報`;
-}
-
-/** 作成日の表示用（例: 2025/12/13） */
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("ja-JP", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
-
-/** 一覧を「新しい順」に並べ替える（createdAt → id の順） */
-function sortReportsDesc(reports: Report[]): Report[] {
-  return [...reports].sort((a, b) => {
-    const ta = new Date(a.createdAt).getTime();
-    const tb = new Date(b.createdAt).getTime();
-    if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) {
-      return tb - ta; // 新しいcreatedAtが上
-    }
-    const na = Number(a.id);
-    const nb = Number(b.id);
-    if (!Number.isNaN(na) && !Number.isNaN(nb)) {
-      return nb - na;
-    }
-    return 0;
-  });
-}
+import {
+  calculateTotalXP,
+  getLevelInfo,
+  type LevelInfo
+} from "@/lib/gamification";
+import { generateCoachAdvice, CoachMessage } from "@/lib/coaching";
 
 export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  // 初回読み込み時：localStorage から一覧を読む
+  // 週ごとの集計キャッシュ
+  const [statsById, setStatsById] = useState<Record<string, ReportStats>>({});
+
+  // トレンドデータ
+  const [trendData, setTrendData] = useState<TrendData[]>([]);
+  const [showTrend, setShowTrend] = useState(false);
+
+  // Gamification
+  const [levelInfo, setLevelInfo] = useState<LevelInfo | undefined>(undefined);
+  const [advice, setAdvice] = useState<CoachMessage | undefined>(undefined);
+
+  // 初回読み込み：localStorage から一覧を読む
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const raw = window.localStorage.getItem(STORAGE_KEY);
 
     if (!raw) {
-      // 初期サンプル（全部「今週」の週報として扱う）
+      // 初期サンプル
       const now = new Date();
       const { start, end } = getWeekRange(now);
       const weekStartIso = start.toISOString();
@@ -123,6 +87,7 @@ export default function ReportsPage() {
           weekEnd: weekEndIso,
         },
       ];
+
       setReports(sortReportsDesc(initial));
       setLoaded(true);
       return;
@@ -135,13 +100,10 @@ export default function ReportsPage() {
           const id = String(r.id ?? index + 1);
 
           const createdAt =
-            typeof r.createdAt === "string" && r.createdAt
-              ? r.createdAt
-              : new Date().toISOString();
+            typeof r.createdAt === "string" && r.createdAt ? r.createdAt : new Date().toISOString();
+
           const createdDate = new Date(createdAt);
-          const baseDate = Number.isNaN(createdDate.getTime())
-            ? new Date()
-            : createdDate;
+          const baseDate = Number.isNaN(createdDate.getTime()) ? new Date() : createdDate;
 
           let weekStartIso: string;
           let weekEndIso: string;
@@ -191,14 +153,64 @@ export default function ReportsPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
   }, [reports, loaded]);
 
+  // 集計を作る
+  const refreshStats = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const nowMs = Date.now();
+
+    const next: Record<string, ReportStats> = {};
+    const allTasksForXP: any[] = []; // Collect all tasks for XP
+
+    for (const r of reports) {
+      const tasks = loadTasks(r.id, nowMs);
+      const stats = buildStats(tasks);
+
+      // Collect tasks for XP
+      tasks.forEach(t => allTasksForXP.push(t));
+
+      // Load note summary
+      const noteKey = `weekly-report-note-${r.id}`;
+      const noteRaw = window.localStorage.getItem(noteKey);
+      if (noteRaw) {
+        stats.noteSummary = noteRaw.slice(0, 100).replace(/\n/g, " ") + (noteRaw.length > 100 ? "..." : "");
+      }
+
+      next[r.id] = stats;
+    }
+    setStatsById(next);
+
+    // Trend Data Update
+    setTrendData(loadAllReportsStats(reports));
+
+    // Gamification Update
+    const totalXP = calculateTotalXP(allTasksForXP);
+    setLevelInfo(getLevelInfo(totalXP));
+
+    // Generate Advice (Based on the latest report if exists)
+    if (reports.length > 0) {
+      const latestReport = reports[0];
+      const tasks = loadTasks(latestReport.id, nowMs);
+      const stats = buildStats(tasks);
+      setAdvice(generateCoachAdvice(stats, tasks));
+    }
+
+  }, [reports]);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    refreshStats();
+
+    const onFocus = () => refreshStats();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loaded, refreshStats]);
+
   // 新しい週を追加
   const handleAddReport = () => {
     setReports((prev) => {
-      const numericIds = prev
-        .map((r) => Number(r.id))
-        .filter((n) => !Number.isNaN(n));
-      const nextIdNum =
-        numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+      const numericIds = prev.map((r) => Number(r.id)).filter((n) => !Number.isNaN(n));
+      const nextIdNum = numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
       const nextId = String(nextIdNum);
 
       const now = new Date();
@@ -220,112 +232,119 @@ export default function ReportsPage() {
     });
   };
 
-  // 週報削除（確認ダイアログ付き）
-  const handleDelete = (reportId: string) => {
+  // 週報削除
+  const handleDelete = (reportId: string, e: React.MouseEvent) => {
     if (typeof window !== "undefined") {
       const ok = window.confirm(
-        "本当にこの週報を削除してよろしいですか？\n（この週報に紐づくタスクもすべて削除されます）"
+        "本当にこのレポートを削除してよろしいですか？\n（このレポートに紐づくタスクとメモも削除されます）"
       );
       if (!ok) return;
 
-      // その週報のタスクも削除
-      window.localStorage.removeItem(`weekly-report-tasks-${reportId}`);
+      window.localStorage.removeItem(`${TASKS_KEY_PREFIX}${reportId}`);
+      window.localStorage.removeItem(`weekly-report-note-${reportId}`);
     }
 
     setReports((prev) => prev.filter((r) => r.id !== reportId));
   };
 
+  const thisWeekReport = useMemo(() => findThisWeekReport(reports), [reports]);
+  const thisWeekStats = thisWeekReport ? statsById[thisWeekReport.id] : null;
+
+  const handleGenerateSample = () => {
+    const samples = generateSampleReports();
+    setReports(sortReportsDesc(samples));
+  };
+
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl py-6 px-4 md:px-8 space-y-6">
-        {/* ヘッダー */}
-        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1.5">
-            <h1 className="text-xl md:text-3xl font-bold">週報一覧</h1>
-            <p className="text-xs md:text-sm text-slate-600 max-w-2xl">
-              週ごとのタスクや振り返りをまとめたページです。
-              各行をクリックすると、その週の詳細なタスク管理画面に移動します。
-            </p>
-            {!loaded && (
-              <p className="text-[11px] text-slate-500">読み込み中...</p>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <p className="text-[11px] md:text-xs text-slate-500">
-              週報の数:{" "}
-              <span className="font-semibold text-slate-800">
-                {reports.length}
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={handleAddReport}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900 px-4 py-2 text-xs md:text-sm font-medium text-white hover:bg-slate-800 transition"
-            >
-              ＋ 新しい週を追加
-            </button>
-          </div>
-        </header>
+    <main className="min-h-screen relative p-4 md:p-8">
+      {/* Background is handled by globals.css (Aurora) */}
+      <div className="mx-auto max-w-5xl space-y-10 relative z-10">
 
-        {/* 週報一覧（1週1行のリスト表示） */}
-        {reports.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center space-y-2">
-            <p className="text-sm text-slate-600">週報がまだありません。</p>
-            <p className="text-[11px] md:text-xs text-slate-500">
-              「新しい週を追加」ボタンから、最初の週報を作成してみてください。
-            </p>
-          </div>
-        ) : (
-          <section className="rounded-xl border bg-white shadow-sm">
-            <ul className="divide-y divide-slate-100">
-              {reports.map((report) => (
-                <li key={report.id}>
-                  <Link
-                    href={`/reports/${report.id}`}
-                    className="group flex items-center gap-3 px-4 py-2.5 md:px-5 md:py-3 hover:bg-slate-50 transition"
-                  >
-                    {/* 左：タイトル＋説明 */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm md:text-base font-medium text-slate-900 group-hover:text-slate-950 truncate">
-                        {report.title}
-                      </p>
-                      <p className="text-[11px] md:text-xs text-slate-600 line-clamp-1">
-                        {report.description}
-                      </p>
-                    </div>
+        <AnimatedCard delay={0} className="p-5">
+          <ReportsHeader
+            reportCount={reports.length}
+            loading={!loaded}
+            levelInfo={levelInfo}
+            advice={advice}
+            onAddReport={handleAddReport}
+          />
+        </AnimatedCard>
 
-                    {/* 右：作成日＋削除ボタン＋矢印 */}
-                    <div className="flex items-center gap-3 text-[10px] md:text-[11px] text-slate-500">
-                      <span>
-                        作成日:{" "}
-                        <span className="font-medium">
-                          {formatDate(report.createdAt)}
-                        </span>
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDelete(report.id);
-                        }}
-                        className="text-[10px] md:text-[11px] text-red-500 hover:text-red-600 hover:underline"
-                      >
-                        削除
-                      </button>
-
-                      <span className="inline-flex items-center gap-1 text-slate-600 group-hover:text-slate-900">
-                        週報を開く
-                        <span aria-hidden>→</span>
-                      </span>
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
+        {reports.length === 0 && loaded && (
+          <AnimatedCard delay={0.1} className="p-8 text-center border-dashed border-2 border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+            <div className="space-y-4">
+              <p className="text-slate-500 dark:text-slate-400">
+                まだレポートがありません。<br />
+                「新しい週を追加」するか、サンプルデータを生成して試すことができます。
+              </p>
+              <button
+                onClick={handleGenerateSample}
+                className="px-4 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900/50 transition-colors text-sm font-medium"
+              >
+                🪄 サンプルデータを生成する
+              </button>
+            </div>
+          </AnimatedCard>
         )}
+
+        {/* View Switcher */}
+        <div className="flex flex-col gap-4">
+          <AnimatedCard delay={0.1} className="border-none shadow-none bg-transparent">
+            <div className="flex items-center justify-end">
+              <div className="flex bg-white/40 dark:bg-slate-800/40 p-1 rounded-lg backdrop-blur-md border border-white/50 dark:border-slate-700/50 shadow-sm">
+                <button
+                  onClick={() => setShowTrend(false)}
+                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${!showTrend
+                    ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white/50 dark:hover:bg-slate-700/50"
+                    }`}
+                >
+                  今週のサマリー
+                </button>
+                <button
+                  onClick={() => setShowTrend(true)}
+                  className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${showTrend
+                    ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white/50 dark:hover:bg-slate-700/50"
+                    }`}
+                >
+                  長期トレンド
+                </button>
+              </div>
+            </div>
+          </AnimatedCard>
+
+          <AnimatePresence mode="wait">
+            {showTrend ? (
+              <AnimatedCard key="trend" delay={0.2} className="bg-transparent border-none shadow-none">
+                <TrendAnalysis
+                  data={trendData}
+                  onGenerateSample={() => {
+                    const samples = generateSampleReports();
+                    setReports(prev => sortReportsDesc([...prev, ...samples]));
+                    alert("サンプルデータを生成しました！");
+                  }}
+                />
+              </AnimatedCard>
+            ) : (
+              <AnimatedCard key="dashboard" delay={0.2} className="bg-transparent border-none shadow-none">
+                <DashboardStats
+                  thisWeekReport={thisWeekReport}
+                  thisWeekStats={thisWeekStats}
+                  onRefresh={refreshStats}
+                />
+              </AnimatedCard>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <AnimatedCard delay={0.3} className="bg-transparent border-none shadow-none">
+          <ReportList
+            reports={reports}
+            statsById={statsById}
+            onDelete={handleDelete}
+          />
+        </AnimatedCard>
       </div>
     </main>
   );
