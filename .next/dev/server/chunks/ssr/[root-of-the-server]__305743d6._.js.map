@@ -2,5 +2,5 @@
   "version": 3,
   "sources": [],
   "sections": [
-    {"offset": {"line": 18, "column": 0}, "map": {"version":3,"sources":["file:///C:/Users/hinat/projects/weekly-report-app/src/app/page.tsx"],"sourcesContent":["export default function Home() {\n  return (\n    <main className=\"min-h-screen flex items-center justify-center bg-slate-50\">\n      <div className=\"p-6 rounded-xl bg-white shadow\">\n        <h1 className=\"text-xl font-bold mb-2\">\n          週報タスク管理アプリ（仮トップ）\n        </h1>\n        <p className=\"text-sm text-slate-600\">\n          ここから、1週間のがんばりを見える化するアプリを一緒に作っていきます。\n        </p>\n      </div>\n    </main>\n  );\n}\n"],"names":[],"mappings":";;;;;;AAAe,SAAS;IACtB,qBACE,8OAAC;QAAK,WAAU;kBACd,cAAA,8OAAC;YAAI,WAAU;;8BACb,8OAAC;oBAAG,WAAU;8BAAyB;;;;;;8BAGvC,8OAAC;oBAAE,WAAU;8BAAyB;;;;;;;;;;;;;;;;;AAM9C"}}]
+    {"offset": {"line": 18, "column": 0}, "map": {"version":3,"sources":["file:///C:/Users/hinat/projects/weekly-report-app/src/app/page.tsx"],"sourcesContent":["import { redirect } from \"next/navigation\";\n\nexport default function Home() {\n  redirect(\"/reports\");\n}\n"],"names":[],"mappings":";;;;AAAA;AAAA;;AAEe,SAAS;IACtB,IAAA,iMAAQ,EAAC;AACX"}}]
 }
